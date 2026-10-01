@@ -16,13 +16,14 @@ from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
 
 LIMIT = 24000
 MAX_FILE = 18 * 1024 * 1024
 HELP = """Генератор КП для агентств
 
-1. /profile Название, контакты, услуги, прайс и реальные кейсы
+1. /profile — затем отдельным сообщением название, услуги, прайс и реальные кейсы
+/contact — затем контакты и условия оплаты
 2. /new — новый бриф. Пришлите текст, фотографии скриншотов, голос или аудиофайл.
 3. /generate — собрать черновик
 4. /edit Что изменить — внести правки
@@ -31,6 +32,8 @@ HELP = """Генератор КП для агентств
 7. /pdf — получить КП; /email — текст для отправки
 
 /draft — текущий черновик
+/templates — три оформления и примеры PDF
+/design — заявка на свой дизайн (описание и референсы)
 /brand #2878B5 — цвет PDF
 /cancel — очистить текущий бриф и черновик
 /delete_me — удалить сохранённые данные
@@ -49,6 +52,39 @@ FIELDS = ("title", "client", "task", "solution", "stages", "timing", "cases", "q
 LABELS = {"client": "Для кого", "task": "Задача", "solution": "Предложение",
           "stages": "Этапы работы", "timing": "Сроки", "cases": "Релевантный опыт",
           "questions": "Нужно уточнить"}
+
+
+BUTTONS = {"🏢 Профиль": "/profile", "📞 Контакты": "/contact", "➕ Новое КП": "/new",
+           "✨ Создать КП": "/generate", "🎨 Дизайны": "/templates", "✏️ Правки": "/edit",
+           "💰 Цена": "/price", "✅ Утвердить": "/approve", "📄 PDF": "/pdf",
+           "Мой дизайн": "/design", "Минимализм": "/template minimal",
+           "Деловой": "/template business", "Редакционный": "/template editorial"}
+TEMPLATES = {"minimal": "Минимализм", "business": "Деловой", "editorial": "Редакционный"}
+PROMPTS = {
+    "/profile": "Пришлите профиль следующим сообщением: название на первой строке, далее услуги, прайс и реальные кейсы. Он сохранится для следующих КП.",
+    "/contact": "Пришлите контакты и условия оплаты следующим сообщением.",
+    "/price": "Напишите итоговую цену числом в рублях, например 50000.",
+    "/edit": "Следующим сообщением напишите, что изменить в черновике.",
+}
+
+
+def send_pdf(uid, data, filename="proposal.pdf"):
+    raw, kind = multipart({"chat_id": uid}, "document", filename, data, "application/pdf")
+    tg("sendDocument", raw=raw, content_type=kind)
+
+
+def template_samples(uid, selected):
+    draft = dict.fromkeys(FIELDS, "")
+    draft.update(title="Сайт для кофейни", client="Демонстрационный клиент",
+                 task="Познакомить гостей с меню и расположением кофейни.",
+                 solution="Лендинг с меню, фотографиями и формой заявки.",
+                 stages="1. Бриф и прототип\n2. Дизайн\n3. Разработка и запуск",
+                 timing="Срок согласуется после утверждения объёма.")
+    for name in TEMPLATES:
+        sample = {"draft": draft, "price": 50000, "agency": "ДЕМО / СТУДИЯ",
+                  "contact": "hello@example.com • Демонстрационные данные", "template": name}
+        send_pdf(uid, render_pdf(sample), "demo-" + name + ".pdf")
+    tell(uid, "Выбрано: " + TEMPLATES[selected] + ". Нажмите название оформления ниже.")
 
 
 def request(url, payload=None, headers=None, raw=None, content_type=None):
@@ -81,7 +117,10 @@ def tg(method, payload=None, **kwargs):
 def tell(uid, text):
     # Keep safely under Telegram's UTF-16 message limit, including emoji.
     for start in range(0, len(text), 1800):
-        tg("sendMessage", {"chat_id": uid, "text": text[start:start + 1800]})
+        tg("sendMessage", {"chat_id": uid, "text": text[start:start + 1800],
+            "reply_markup": {"keyboard": [["🏢 Профиль", "📞 Контакты"], ["➕ Новое КП", "✨ Создать КП"],
+                ["✏️ Правки", "💰 Цена"], ["🎨 Дизайны", "📄 PDF"], ["✅ Утвердить"],
+                ["Минимализм", "Деловой", "Редакционный"], ["Мой дизайн"]], "resize_keyboard": True}})
 
 
 def database(path):
@@ -135,15 +174,28 @@ def render_pdf(state):
     for name, file in (("KP", "DejaVuSans.ttf"), ("KP-Bold", "DejaVuSans-Bold.ttf")):
         if name not in pdfmetrics.getRegisteredFontNames():
             pdfmetrics.registerFont(TTFont(name, str(font_dir / file)))
-    accent = colors.HexColor(state.get("color", "#2878B5"))
+    template = state.get("template", "minimal")
+    default_color = {"minimal": "#2878B5", "business": "#163B47", "editorial": "#A04427"}[template]
+    accent = colors.HexColor(state.get("color", default_color))
     body = ParagraphStyle("body", fontName="KP", fontSize=10, leading=16, spaceAfter=10)
     heading = ParagraphStyle("heading", parent=body, fontName="KP-Bold", fontSize=12,
                              textColor=accent, spaceBefore=12, keepWithNext=True)
     title = ParagraphStyle("title", parent=heading, fontSize=23, leading=29, spaceAfter=22)
+    if template == "business":
+        heading.backColor = colors.HexColor("#EEF3F5")
+        heading.borderPadding = 7
+        title.fontSize, title.leading = 26, 32
+        title.backColor = None
+    elif template == "editorial":
+        title.fontSize, title.leading = 32, 38
+        body.fontSize, body.leading = 11, 18
+        heading.spaceBefore = 18
     para = lambda value, style: Paragraph(escape(value).replace("\n", "<br/>"), style)
     draft = state["draft"]
     story = [para(state.get("agency", "Коммерческое предложение"), heading),
              para(draft["title"], title)]
+    if template == "editorial":
+        story += [HRFlowable(width="100%", thickness=2, color=accent), Spacer(1, 10)]
     for key, label in LABELS.items():
         if draft[key].strip():
             story += [para(label, heading), para(draft[key], body)]
@@ -153,6 +205,12 @@ def render_pdf(state):
               para(state.get("contact", "Уточните у отправителя"), body)]
     output = io.BytesIO()
     def footer(canvas, doc):
+        if template == "business":
+            canvas.setFillColor(accent)
+            canvas.rect(0, 0, 12, doc.pagesize[1], fill=1, stroke=0)
+        elif template == "editorial":
+            canvas.setStrokeColor(accent)
+            canvas.line(44, 44, 550, 44)
         canvas.setFont("KP", 8)
         canvas.setFillColor(colors.HexColor("#64748B"))
         canvas.drawString(44, 28, "Коммерческое предложение")
@@ -213,11 +271,59 @@ def handle(message, db, allowed):
         return
     state = load(db, uid)
     text = message.get("text", "")
-    command, _, arg = text.partition(" ")
+    text = BUTTONS.get(text, text)
+    parts = text.split(maxsplit=1)
+    command, arg = (parts[0], parts[1]) if len(parts) == 2 else (text.strip(), "")
     command = command.split("@")[0].lower()
     arg = arg.strip()
     if command in ("/start", "/help"):
+        state.pop("pending", None)
+        save(db, uid, state)
         return tell(uid, HELP)
+    if command in PROMPTS and not arg:
+        if command in ("/price", "/edit") and not state.get("draft"):
+            return tell(uid, "Сначала создайте КП: пришлите бриф и нажмите «✨ Создать КП».")
+        state["pending"] = command
+        save(db, uid, state)
+        return tell(uid, PROMPTS[command])
+    if command == "/design":
+        state["pending"] = "/design"
+        save(db, uid, state)
+        return tell(uid, "Свой дизайн: пришлите описание и до 5 примеров (фото или PDF). Это заявка на ручную настройку будущего тарифа Pro, не автоматическое копирование. Завершить: /done. Платежей в демо нет.")
+    if command == "/done":
+        state.pop("pending", None)
+        save(db, uid, state)
+        return tell(uid, "Ввод завершён. Материалы дизайна сохранены в вашем профиле; автоматически никому не отправлены. Оформление PDF пока выбирается из готовых.")
+    if not text.startswith("/") and state.get("pending") == "/design":
+        design = state.setdefault("design_request", {"description": "", "references": []})
+        media = (message.get("photo") or [None])[-1] or message.get("document")
+        if media:
+            if len(design["references"]) >= 5:
+                raise ValueError("Уже сохранено 5 примеров. /done — завершить.")
+            design["references"].append({"file_id": media["file_id"], "kind": "photo" if message.get("photo") else "document"})
+        elif not text:
+            raise ValueError("Пришлите текст, фото или PDF.")
+        description = (design["description"] + "\n" + (message.get("caption") or text)).strip()
+        if len(description) > 8000:
+            raise ValueError("Описание слишком длинное: максимум 8000 символов.")
+        design["description"] = description
+        save(db, uid, state)
+        return tell(uid, "Референс/описание сохранены. Добавьте ещё или /done.")
+    if not text.startswith("/") and state.get("pending") in PROMPTS:
+        if not text.strip():
+            return tell(uid, "На этом шаге нужен текст. " + PROMPTS[state["pending"]])
+        command, arg = state["pending"], text.strip()
+    elif text.startswith("/"):
+        state.pop("pending", None)
+        save(db, uid, state)
+    if command == "/templates":
+        return template_samples(uid, state.get("template", "minimal"))
+    if command == "/template":
+        if arg not in TEMPLATES:
+            raise ValueError("Выберите /template minimal, business или editorial.")
+        state["template"] = arg
+        save(db, uid, state)
+        return tell(uid, "Выбрано оформление: " + TEMPLATES[arg] + ". Оно применится при /pdf.")
     if command == "/delete_me":
         with db:
             db.execute("DELETE FROM users WHERE id=?", (uid,))
@@ -252,6 +358,7 @@ def handle(message, db, allowed):
         draft = ai([{"role": "system", "content": SYSTEM},
                     {"role": "user", "content": json.dumps(material, ensure_ascii=False)}])
         state.update(draft=draft, approved=False)
+        state.pop("pending", None)
         save(db, uid, state)
         return tell(uid, preview(state))
     elif command == "/price":
@@ -273,8 +380,7 @@ def handle(message, db, allowed):
             raise ValueError("Проверьте /draft, цену и условия, затем /approve.")
         if command == "/email":
             return tell(uid, state["draft"]["email"])
-        raw, kind = multipart({"chat_id": uid}, "document", "proposal.pdf", render_pdf(state), "application/pdf")
-        tg("sendDocument", raw=raw, content_type=kind)
+        send_pdf(uid, render_pdf(state))
         return
     elif text.startswith("/"):
         return tell(uid, "Неизвестная команда. /help")
@@ -290,12 +396,20 @@ def handle(message, db, allowed):
         state.pop("price", None)
         save(db, uid, state)
         return tell(uid, f"Добавлено в бриф ({len(brief)} символов). Можно прислать ещё материал или /generate.")
+    state.pop("pending", None)
     save(db, uid, state)
     tell(uid, "Сохранено." + (" Пришлите бриф." if command in ("/new", "/cancel") else " /help — команды."))
 
 
 def main():
     os.umask(0o077)
+    env_file = Path(".env")
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
     for key in ("BOT_TOKEN", "ALLOWED_USER_IDS", "AI_BASE_URL", "AI_API_KEY", "AI_MODEL"):
         if not os.getenv(key):
             raise SystemExit("Missing configuration: " + key)
