@@ -62,7 +62,7 @@ class BotTest(unittest.TestCase):
             state = bot.load(db, 1)
             self.assertEqual(state["agency"], "Студия")
             self.assertNotIn("brief", state)
-            self.assertNotIn("pending", state)
+            self.assertEqual(state["pending"], "/contact")
             send("📞 Контакты")
             send("hello@example.com")
             self.assertEqual(bot.load(db, 1)["contact"], "hello@example.com")
@@ -81,6 +81,33 @@ class BotTest(unittest.TestCase):
             send("/new")
             send("Нужно убрать офис")
             self.assertEqual(bot.load(db, 1)["brief"], "Нужно убрать офис")
+        db.close()
+
+    def test_compact_navigation_preserves_brief(self):
+        db = bot.database(":memory:")
+        def send(text):
+            bot.handle({"from": {"id": 1}, "chat": {"id": 1, "type": "private"}, "text": text}, db, {1})
+        with patch.object(bot, "tg") as telegram:
+            send("/start")
+            keyboard = telegram.call_args.args[1]["reply_markup"]["keyboard"]
+            self.assertEqual(sum(map(len, keyboard)), 3)
+            send("➕ Создать КП")
+            self.assertEqual(bot.load(db, 1)["pending"], "/profile")
+            send("Агентство\nСайты")
+            send("hello@example.com")
+            send("Клиенту нужен лендинг")
+            send("⚙️ Настройки")
+            send("🎨 Оформление")
+            send("Деловой")
+            send("🏠 Главное меню")
+            send("➕ Создать КП")
+            self.assertEqual(bot.load(db, 1)["brief"], "Клиенту нужен лендинг")
+            self.assertIn("Да, новое КП", str(telegram.call_args.args[1]))
+            send("📁 Текущее КП")
+            self.assertIn("✨ Сформировать", str(telegram.call_args.args[1]))
+            send("Да, новое КП")
+            self.assertNotIn("brief", bot.load(db, 1))
+            self.assertIn("profile", bot.load(db, 1))
         db.close()
 
     def test_untrusted_model_output(self):
