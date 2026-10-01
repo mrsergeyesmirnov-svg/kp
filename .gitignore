@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# KP runtime and sales data
+data/
+*.sqlite*
+*.pdf
+*.xlsx
