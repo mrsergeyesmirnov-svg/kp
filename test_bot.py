@@ -52,6 +52,37 @@ class BotTest(unittest.TestCase):
                 self.assertEqual(bot.load(db, 1), {})
                 db.close()
 
+    def test_dialogue_and_templates(self):
+        db = bot.database(":memory:")
+        def send(text):
+            bot.handle({"from": {"id": 1}, "chat": {"id": 1, "type": "private"}, "text": text}, db, {1})
+        with patch.object(bot, "tell"), patch.object(bot, "send_pdf") as pdf:
+            send("/profile")
+            send("Студия\nУборка квартир")
+            state = bot.load(db, 1)
+            self.assertEqual(state["agency"], "Студия")
+            self.assertNotIn("brief", state)
+            self.assertNotIn("pending", state)
+            send("📞 Контакты")
+            send("hello@example.com")
+            self.assertEqual(bot.load(db, 1)["contact"], "hello@example.com")
+            send("/profile\nНовое название\nУслуги")
+            self.assertEqual(bot.load(db, 1)["agency"], "Новое название")
+            send("/templates")
+            self.assertEqual(pdf.call_count, 3)
+            send("Деловой")
+            self.assertEqual(bot.load(db, 1)["template"], "business")
+            send("Мой дизайн")
+            send("Белый фон, зелёные заголовки")
+            send("/done")
+            self.assertIn("зелёные", bot.load(db, 1)["design_request"]["description"])
+            self.assertNotIn("brief", bot.load(db, 1))
+            send("/profile")
+            send("/new")
+            send("Нужно убрать офис")
+            self.assertEqual(bot.load(db, 1)["brief"], "Нужно убрать офис")
+        db.close()
+
     def test_untrusted_model_output(self):
         with self.assertRaises(ValueError):
             bot.validate({"title": "неполный ответ"})
