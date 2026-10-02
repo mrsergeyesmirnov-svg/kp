@@ -110,6 +110,43 @@ class BotTest(unittest.TestCase):
             self.assertIn("profile", bot.load(db, 1))
         db.close()
 
+    def test_screenshot_regression_and_complete_button_flow(self):
+        import json
+        db = bot.database(":memory:")
+        draft = dict.fromkeys(bot.FIELDS, "")
+        draft.update(title="Уборка квартиры", solution="Уборка согласованных помещений", task="Подготовить квартиру")
+        def send(text):
+            bot.handle({"from": {"id": 1}, "chat": {"id": 1, "type": "private"}, "text": text}, db, {1})
+        env = {"AI_BASE_URL": "https://ai.api.cloud.yandex.net/v1", "AI_API_KEY": "test-only",
+               "AI_MODEL": "gpt://test-folder/yandexgpt/latest"}
+        with patch.dict("os.environ", env), patch.object(bot, "tell") as replies, patch.object(bot, "send_pdf") as pdf:
+            send("/profile")
+            send("Исполнитель\nУборка квартир, 5000 рублей")
+            send("hello@example.com")
+            send("/generate")
+            self.assertIn("уже сохранён", replies.call_args.args[1])
+            self.assertNotIn("pending", bot.load(db, 1))
+            send("Нужно убрать двухкомнатную квартиру к пятнице")
+            response = {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(draft)}}]}
+            with patch.object(bot, "request", return_value=response) as request:
+                send("✨ Сформировать")
+                headers = request.call_args.args[2]
+                self.assertEqual(headers["OpenAI-Project"], "test-folder")
+                self.assertEqual(headers["Authorization"], "Api-Key test-only")
+                self.assertEqual(request.call_args.args[1]["response_format"]["type"], "json_schema")
+            send("💰 Цена")
+            send("5 000 ₽")
+            self.assertEqual(bot.load(db, 1)["price"], 5000)
+            send("✅ Утвердить")
+            send("📄 PDF")
+            self.assertTrue(pdf.call_args.args[1].startswith(b"%PDF"))
+            send("✏️ Правки")
+            with patch.object(bot, "request", side_effect=bot.urllib.error.HTTPError("https://example.com", 403, "Forbidden", {}, None)):
+                with self.assertRaisesRegex(ValueError, "нет доступа"):
+                    send("Сократи текст")
+            self.assertEqual(bot.load(db, 1)["draft"], draft)
+        db.close()
+
     def test_untrusted_model_output(self):
         with self.assertRaises(ValueError):
             bot.validate({"title": "неполный ответ"})
