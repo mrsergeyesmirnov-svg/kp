@@ -1,0 +1,9 @@
+.git
+.env
+.env.*
+data
+backups
+__pycache__
+*.sqlite*
+*.pdf
+*.xlsx
