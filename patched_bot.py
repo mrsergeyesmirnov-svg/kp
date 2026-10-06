@@ -1,10 +1,12 @@
 """Compatibility layer that upgrades custom PDF imports without disturbing the proven bot flow."""
 import json
+from pathlib import Path
 
 import bot
 import template_engine
 
 _ORIGINAL_RENDER = bot.render_pdf
+_ORIGINAL_HANDLE = bot.handle
 _LAST_STYLE = None
 
 
@@ -39,8 +41,6 @@ def extract_seller(text):
             result["layout_map"] = "{}"
     except Exception:
         result["layout_map"] = "{}"
-    # The original state machine saves the import candidate before show_import().
-    # Finalize here so role_map/template_pdf are already persisted in SQLite.
     if _LAST_STYLE is not None:
         result["custom_style"] = _LAST_STYLE
         template_engine.finalize_candidate(result)
@@ -75,10 +75,45 @@ def show_import(uid, candidate):
         "import")
 
 
+def _template_paths(style):
+    style = style or {}
+    return {Path(value) for key in ('source_pdf', 'template_pdf') if (value := style.get(key))}
+
+
+def _cleanup_paths(paths, keep=()):
+    keep = {str(Path(p)) for p in keep}
+    for path in paths:
+        try:
+            if str(path) not in keep:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def handle(message, db, allowed):
+    """Delegate to the proven state machine, adding lifecycle cleanup for stored template PDFs."""
+    uid = message.get('from', {}).get('id')
+    private = message.get('chat', {}).get('type') == 'private'
+    command = bot.BUTTONS.get(message.get('text', ''), message.get('text', '')).split(maxsplit=1)[0].split('@')[0].lower()
+    before = bot.load(db, uid) if private and uid in allowed else {}
+    old_active = _template_paths(before.get('custom_style'))
+    candidate = before.get('import_candidate') or {}
+    candidate_paths = _template_paths(candidate.get('custom_style'))
+    result = _ORIGINAL_HANDLE(message, db, allowed)
+    if command == '/delete_me':
+        _cleanup_paths(old_active | candidate_paths)
+    elif command == '/import_cancel':
+        _cleanup_paths(candidate_paths, keep=old_active)
+    elif command == '/import_accept':
+        _cleanup_paths(old_active, keep=candidate_paths)
+    return result
+
+
 bot.read_proposal = read_proposal
 bot.extract_seller = extract_seller
 bot.render_pdf = render_pdf
 bot.show_import = show_import
+bot.handle = handle
 
 if __name__ == "__main__":
     bot.main()
