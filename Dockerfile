@@ -3,6 +3,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-co
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY bot.py .
+COPY bot.py template_engine.py patched_bot.py .
 ENV DATA_DIR=/data PYTHONUNBUFFERED=1
-CMD ["python", "bot.py"]
+CMD ["python", "patched_bot.py"]
