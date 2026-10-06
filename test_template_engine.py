@@ -105,6 +105,16 @@ class TemplateEngineTest(unittest.TestCase):
         self.assertIn('БИК 044525225', req)
         self.assertNotIn('Услуги: сайты', req)
 
+    def test_multi_slot_sections_are_split_not_duplicated(self):
+        slots = [
+            {'text': 'old one', 'bbox': [0, 0, 200, 40]},
+            {'text': 'old two', 'bbox': [0, 50, 200, 90]},
+        ]
+        chunks = template_engine._split_for_slots('alpha beta gamma delta epsilon zeta eta theta', slots)
+        self.assertEqual(len(chunks), 2)
+        self.assertNotEqual(chunks[0], chunks[1])
+        self.assertEqual(' '.join(chunks).split(), 'alpha beta gamma delta epsilon zeta eta theta'.split())
+
     def test_bad_layout_map_falls_back_safely(self):
         self.assertEqual(template_engine.parse_role_map('not json'), {})
         self.assertEqual(template_engine.parse_role_map('{"P1B1":"HACK"}'), {})
