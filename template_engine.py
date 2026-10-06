@@ -272,6 +272,7 @@ def _fit_text(page, rect, text, size, color, prefix='', serif=False):
 def _state_values(state, requisites=''):
     draft = state.get('draft') or {}
     price = state.get('price')
+    current_requisites = extract_requisites(state.get('profile',''), state.get('contact','')) or requisites
     return {
         'agency': state.get('agency',''),
         'title': draft.get('title',''),
@@ -283,7 +284,7 @@ def _state_values(state, requisites=''):
         'cases': draft.get('cases',''),
         'price': (f'{int(price):,} ₽'.replace(',', ' ') if price else ''),
         'contact': state.get('contact',''),
-        'requisites': requisites or extract_requisites(state.get('profile',''), state.get('contact','')),
+        'requisites': current_requisites,
     }
 
 
