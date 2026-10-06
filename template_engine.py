@@ -288,6 +288,37 @@ def _state_values(state, requisites=''):
     }
 
 
+def _split_for_slots(text, slots):
+    """Split one semantic value across multiple layout slots without duplicating it."""
+    if len(slots) <= 1:
+        return [text]
+    words = text.split()
+    if not words:
+        return [''] * len(slots)
+    capacities = []
+    for slot in slots:
+        original = len(slot.get('text', ''))
+        x0, y0, x1, y1 = slot.get('bbox', (0, 0, 1, 1))
+        area_hint = max(1, int(max(1, x1-x0) * max(1, y1-y0) / 80))
+        capacities.append(max(8, original, area_hint))
+    total = sum(capacities)
+    targets = [max(1, round(len(text) * c / total)) for c in capacities]
+    chunks, idx = [], 0
+    for i, target in enumerate(targets):
+        if i == len(targets) - 1:
+            chunks.append(' '.join(words[idx:]))
+            break
+        start = idx
+        count = 0
+        while idx < len(words) and (count < target or idx == start):
+            count += len(words[idx]) + (1 if idx > start else 0)
+            idx += 1
+        chunks.append(' '.join(words[start:idx]))
+    while len(chunks) < len(slots):
+        chunks.append('')
+    return chunks
+
+
 def render_layout_pdf(state):
     style = state.get('custom_style') or {}
     template = Path(style.get('template_pdf') or '')
@@ -301,21 +332,30 @@ def render_layout_pdf(state):
         placed = set()
         overflow = []
         serif = bool(style.get('serif'))
+        role_slots = {}
         for sid, role in role_map.items():
-            if role not in values or not values[role]:
-                continue
             slot = slots.get(sid)
-            if not slot or slot['page'] >= len(doc):
-                continue
-            page = doc[slot['page']]
-            ok = _fit_text(page, pymupdf.Rect(slot['bbox']), values[role],
-                           float(slot.get('font_size') or style.get('body_size',10)),
-                           slot.get('color') or (0,0,0), slot.get('prefix',''), serif)
-            if ok:
+            if slot and role in values and values.get(role) and slot['page'] < len(doc):
+                role_slots.setdefault(role, []).append(slot)
+        for role, group in role_slots.items():
+            group.sort(key=lambda slot: (slot['page'], slot['bbox'][1], slot['bbox'][0]))
+            repeat = role in {'agency', 'price', 'contact', 'requisites'}
+            chunks = [values[role]] * len(group) if repeat else _split_for_slots(values[role], group)
+            role_ok = False
+            for slot, chunk in zip(group, chunks):
+                if not chunk.strip():
+                    continue
+                page = doc[slot['page']]
+                ok = _fit_text(page, pymupdf.Rect(slot['bbox']), chunk,
+                               float(slot.get('font_size') or style.get('body_size',10)),
+                               slot.get('color') or (0,0,0), slot.get('prefix',''), serif)
+                if ok:
+                    role_ok = True
+                else:
+                    overflow.append((role, chunk))
+            if role_ok:
                 placed.add(role)
-            else:
-                overflow.append((role, values[role]))
-        mandatory = ['title','client','task','solution','stages','timing','cases','price','contact','requisites']
+        mandatory = ['agency','title','client','task','solution','stages','timing','cases','price','contact','requisites']
         missing = [(r, values[r]) for r in mandatory if values.get(r) and r not in placed and all(x[0] != r for x in overflow)]
         overflow.extend(missing)
         if overflow:
@@ -324,7 +364,7 @@ def render_layout_pdf(state):
             font = _font_path(False, serif)
             bold = _font_path(True, serif)
             y = 44
-            labels = {'title':'Коммерческое предложение','client':'Для кого','task':'Задача','solution':'Предложение','stages':'Этапы работы','timing':'Сроки','cases':'Релевантный опыт','price':'Стоимость','contact':'Контакты и условия','requisites':'Реквизиты'}
+            labels = {'agency':'Исполнитель','title':'Коммерческое предложение','client':'Для кого','task':'Задача','solution':'Предложение','stages':'Этапы работы','timing':'Сроки','cases':'Релевантный опыт','price':'Стоимость','contact':'Контакты и условия','requisites':'Реквизиты'}
             for role, text in overflow:
                 if y > page.rect.height - 110:
                     page = doc.new_page(width=float(page_size[0]), height=float(page_size[1])); y = 44
