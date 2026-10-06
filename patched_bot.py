@@ -5,10 +5,14 @@ import bot
 import template_engine
 
 _ORIGINAL_RENDER = bot.render_pdf
+_LAST_STYLE = None
 
 
 def read_proposal(data, ocr):
-    return template_engine.extract_proposal(data, ocr, bot.LIMIT)
+    global _LAST_STYLE
+    source, style = template_engine.extract_proposal(data, ocr, bot.LIMIT)
+    _LAST_STYLE = style
+    return source, style
 
 
 def extract_seller(text):
@@ -35,6 +39,11 @@ def extract_seller(text):
             result["layout_map"] = "{}"
     except Exception:
         result["layout_map"] = "{}"
+    # The original state machine saves the import candidate before show_import().
+    # Finalize here so role_map/template_pdf are already persisted in SQLite.
+    if _LAST_STYLE is not None:
+        result["custom_style"] = _LAST_STYLE
+        template_engine.finalize_candidate(result)
     return result
 
 
